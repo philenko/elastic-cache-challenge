@@ -5,13 +5,13 @@ from configparser import ConfigParser
 from flask import Flask, request, render_template, g, abort
 import time
 
-def config(section, filename='config/database.ini'):
-    # create a parser
-    parser = ConfigParser()
-    # read config file
-    parser.read(filename)
 
-db = {}
+def config(section, filename='config/database.ini'):
+
+    parser = ConfigParser()
+    parser.read(filename)
+    db = {}
+
     if parser.has_section(section):
         for i in parser.items(section):
             db[i[0]] = i[1]
@@ -20,16 +20,18 @@ db = {}
 
     return db
 
-def postgres():
+
+def conn_postgres():
     try:
         params = config('postgres')
         print('Connecting to PostgreSQL database...')
         return psycopg2.connect(**params)
-    except(Exception,psycopg2.DatabaseError) as error:
+    except(Exception, psycopg2.DatabaseError) as error:
         print('Connection to PostgreSQL error:', error)
         raise error
 
-def redis():
+
+def conn_redis():
     try:
         params = config('redis')
         print('Connecting to Redis...')
@@ -40,25 +42,26 @@ def redis():
 
 
 def fetch():
+
     query_str = 'select slow_version();'
     redis_key = 'slow_version'
     redis_ttl = 10
 
-connect_to_redis = redis()
 
+    connect_to_redis = conn_redis()
     try:
         value = connect_to_redis.get(redis_key)
         if value is not None:
-        return value.decode('utf-8')
+            return value.decode('utf-8')
     except Exception as eror:
         print('fetch error:', error)
-        raise error 
-    finally: 
-        redis_conn.close()
+        raise error
+    finally:
+        connect_to_redis.close()
         print('fetch redis connection closed')
 
-connect_to_postgress = postgres()
-cursor = connect_to_postgres.cursor()
+    connect_to_postgres = conn_postgres()
+    cursor = connect_to_postgres.cursor()
 
     try:
         cursor.execute(query_str)
@@ -75,10 +78,12 @@ cursor = connect_to_postgres.cursor()
 
 app = Flask(__name__)
 
+
 @app.before_request
 def before_request():
     g.request_start_time = time.time()
     g.request_time = lambda: "%.5fs" % (time.time() - g.request_start_time)
+
 
 @app.route("/")
 def index():
@@ -86,11 +91,12 @@ def index():
     db_result = fetch(sql)
 
     if(db_result):
-        db_version = ''.join(db_result)    
+        db_version = ''.join(db_result)
     else:
         abort(500)
     params = config()
-    return render_template('index.html', db_version = db_version, db_host = params['host'])
+    return render_template('index.html', db_version= db_version, db_host = params['host'])
+
 
 if __name__ == "__main__":
     app.run()
