@@ -77,7 +77,7 @@ def before_request():
 
 @app.route("/")     
 def index():
-    db_hosy = None
+    db_host = None
     db_version = None
     try:
         params = config('postgresql')
