@@ -84,8 +84,8 @@ def index():
         db_host = params['host']
         db_version = fetch()
         
-    except Exception as e:
-        print('index() error:', e)
+    except Exception as error:
+        print('index error:', error)
 
     return render_template('index.html', db_version = db_version, db_host = db_host)
 
