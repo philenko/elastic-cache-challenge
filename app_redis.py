@@ -5,16 +5,12 @@ from configparser import ConfigParser
 from flask import Flask, request, render_template, g, abort
 import time
 import redis
-import json
-rcache = redis.Redis(host='', port=6379, db=0, password=None)
-TTL=10
 
-def config(filename='config/database.ini', section='postgresql'):
+def config(section, filename='config/database.ini'):
     # create a parser
     parser = ConfigParser()
     # read config file
     parser.read(filename)
-
     # get section, default to postgresql
     db = {}
     if parser.has_section(section):
@@ -26,54 +22,53 @@ def config(filename='config/database.ini', section='postgresql'):
 
     return db
 
+def get_postgres():
+    params = config('postgresql')
+    print('get_postgres() connecting to postgres...')
+    return psycopg2.connect(**params)
+
+def get_redis():
+    params = config('redis')
+    print('get_redis() connecting to redis...')
+    return redis.Redis.from_url(**params)
 
 def fetch(sql):
-    # connect to database listed in database.ini
-    res = rcache.get(sql)
-    if res:
-        return json.loads(res)
-    res = dbfetch(sql)
-    rcache.setex(sql, TTL, json.dumps(res))
-    return res
+    query_str = 'select slow_version();'
+    redis_key = 'slow_version'
+    redis_ttl = 10
 
-def dbfetch(sql):
-    conn=connect()
-    if(conn !=None):
-        cur = conn.cursor()
-        cur.execute(sql)
-            
-        # fetch one row
-        retval = cur.fetchone()
+    redis_conn = get_redis()
 
-        # close db connection
-        cur.close()
-        conn.close()
-        print("PostgreSQL connection is now closed")
-        return retval
-    else: 
-        return None
-
-
-
-def connect():
-    """ Connect to the PostgreSQL database server and return a cursor """
-    conn = None
     try:
-        # read connection parameters
-        params = config()
+        value = redis_conn.get(redis_key)
+        if value is not None:
+            return value.decode('utf-8')
+    except Exception as error:
+        print('select_version() error:', error)
+        raise error
+    finally:
+        redis_conn.close()
+        print('select_version() redis connection closed')
 
-        # connect to the PostgreSQL server
-        print('Connecting to the PostgreSQL database...')
-        conn = psycopg2.connect(**params)
-        
-                
-    except (Exception, psycopg2.DatabaseError) as error:
-        print("Error:", error)
-        conn = None
-    
-    else:
-        # return a conn
-        return conn
+    postgres_conn = get_postgres()
+    cursor = postgres_conn.cursor()
+    try:
+        # read value from database
+        cursor.execute(query_str)
+        value = cursor.fetchone()[0]
+
+        # set value in cache
+        redis_conn.set(redis_key, value.encode('utf-8'), ex=redis_ttl)
+        return value
+
+    except Exception as error:
+        print('select_version() error:', error)
+        raise error
+
+    finally:
+        cursor.close()
+        postgres_conn.close()
+        print('select_version() postgres connection closed')
 
 app = Flask(__name__) 
 
