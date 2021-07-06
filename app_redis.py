@@ -24,15 +24,15 @@ def config(section, filename='config/database.ini'):
 
 def get_postgres():
     params = config('postgresql')
-    print('get_postgres() connecting to postgres...')
+    print('connecting to postgres...')
     return psycopg2.connect(**params)
 
 def get_redis():
     params = config('redis')
-    print('get_redis() connecting to redis...')
+    print('connecting to redis...')
     return redis.Redis.from_url(**params)
 
-def fetch(sql):
+def fetch():
     query_str = 'select slow_version();'
     redis_key = 'slow_version'
     redis_ttl = 10
@@ -44,31 +44,29 @@ def fetch(sql):
         if value is not None:
             return value.decode('utf-8')
     except Exception as error:
-        print('select_version() error:', error)
+        print('fetch error:', error)
         raise error
     finally:
         redis_conn.close()
-        print('select_version() redis connection closed')
+        print('fetch redis connection closed')
 
     postgres_conn = get_postgres()
     cursor = postgres_conn.cursor()
     try:
-        # read value from database
         cursor.execute(query_str)
         value = cursor.fetchone()[0]
 
-        # set value in cache
         redis_conn.set(redis_key, value.encode('utf-8'), ex=redis_ttl)
         return value
 
     except Exception as error:
-        print('select_version() error:', error)
+        print('fetch error:', error)
         raise error
 
     finally:
         cursor.close()
         postgres_conn.close()
-        print('select_version() postgres connection closed')
+        print('fetch postgres connection closed')
 
 app = Flask(__name__) 
 
@@ -79,15 +77,17 @@ def before_request():
 
 @app.route("/")     
 def index():
-    sql = 'SELECT slow_version();'
-    db_result = fetch(sql)
+    db_hosy = None
+    db_version = None
+    try:
+        params = config('postgresql')
+        db_host = params['host']
+        db_version = fetch()
+        
+    except Exception as e:
+        print('index() error:', e)
 
-    if(db_result):
-        db_version = ''.join(db_result)    
-    else:
-        abort(500)
-    params = config()
-    return render_template('index.html', db_version = db_version, db_host = params['host'])
+    return render_template('index.html', db_version = db_version, db_host = db_host)
 
 if __name__ == "__main__":        # on running python app.py
     app.run()                     # run the flask app
