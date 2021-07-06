@@ -35,7 +35,7 @@ def get_postgres():
 
     try:
         # get postgres configuration
-        config = ini('postgres')
+        config = ini('postgresql')
 
         # try to connect to the postgres
         print('get_postgres() connecting to postgres...')
