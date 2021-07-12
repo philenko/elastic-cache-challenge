@@ -1,0 +1,311 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  # VPC
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.30.0.0/16
+      EnableDnsSupport: "true"
+      EnableDnsHostnames: "true"
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: myVPC
+  # PUBLIC SUBNETS
+  publicSubnetA:
+    Type: AWS::EC2::Subnet
+    DependsOn:
+      - myVPC
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.0.0/24
+      AvailabilityZone: "us-east-1a"
+      Tags:
+        - Key: Name
+          Value: Public SubnetA
+  publicSubnetB:
+    Type: AWS::EC2::Subnet
+    DependsOn:
+      - myVPC
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.8.0/24
+      AvailabilityZone: "us-east-1b"
+      Tags:
+        - Key: Name
+          Value: Public SubnetB
+  # PRIVATE SUBNETS
+  privateSubnetA:
+    Type: AWS::EC2::Subnet
+    DependsOn:
+      - myVPC
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.1.0/24
+      AvailabilityZone: "us-east-1a"
+      Tags:
+        - Key: Name
+          Value: Private SubnetA
+  privateSubnetB:
+    Type: AWS::EC2::Subnet
+    DependsOn:
+      - myVPC
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.9.0/24
+      AvailabilityZone: "us-east-1b"
+      Tags:
+        - Key: Name
+          Value: Private SubnetB
+  # PUBLIC ROUTE TABLES
+  publicRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: public RT SubnetA
+  publicRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: public RT SubnetB
+  # Route table Association
+  # SubnetA
+  publicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - publicSubnetA
+      - publicRouteTableA
+    Properties:
+      RouteTableId: !Ref publicRouteTableA
+      SubnetId: !Ref publicSubnetA
+    # SubnetB
+  publicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - publicSubnetB
+      - publicRouteTableB
+    Properties:
+      RouteTableId: !Ref publicRouteTableB
+      SubnetId: !Ref publicSubnetB
+  # PRIVATE ROUTE TABLES
+  privateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: private RT SubnetA
+  privateRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: private RT SubnetB
+  # Route table Association
+  # SubnetA
+  privateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - privateSubnetA
+      - privateRouteTableA
+    Properties:
+      SubnetId: !Ref privateSubnetA
+      RouteTableId: !Ref privateRouteTableA
+    # SubnetB
+  privateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - privateSubnetB
+      - privateRouteTableB
+    Properties:
+      SubnetId: !Ref privateSubnetB
+      RouteTableId: !Ref privateRouteTableB
+  # INTERNET GATEWAY
+  myIG:
+    Type: AWS::EC2::InternetGateway
+    DependsOn:
+      - myVPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IG for myVPC
+  # VPC IG Attachment
+  attachIG:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn:
+      - myIG
+    Properties:
+      VpcId: !Ref myVPC
+      InternetGatewayId: !Ref myIG
+  # ELASTIC IP
+  elasticIPA:
+    Type: AWS::EC2::EIP
+    DependsOn:
+      - myVPC
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: EIP for NATGW A
+  elasticIPB:
+    Type: AWS::EC2::EIP
+    DependsOn:
+      - myVPC
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: EIP for NATGW B
+  # NATGATEWAY
+  NATGWA:
+    Type: AWS::EC2::NatGateway
+    DependsOn:
+      - myVPC
+      - elasticIPA
+      - publicSubnetA
+    Properties:
+      AllocationId: !GetAtt elasticIPA.AllocationId
+      SubnetId: !Ref publicSubnetA
+      Tags:
+        - Key: Name
+          Value: NATGW subnetA
+  NATGWB:
+    Type: AWS::EC2::NatGateway
+    DependsOn:
+      - myVPC
+      - elasticIPB
+      - publicSubnetB
+    Properties:
+      AllocationId: !GetAtt elasticIPB.AllocationId
+      SubnetId: !Ref publicSubnetB
+      Tags:
+        - Key: Name
+          Value: NATGW subnetB
+  # ROUTE TABLES
+  # Public
+  myIGWRouteZoneA:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - publicSubnetA
+      - publicRouteTableA
+    Properties:
+      RouteTableId: !Ref publicRouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref myIG
+  myIGWRouteZoneB:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - publicSubnetB
+      - publicRouteTableB
+    Properties:
+      RouteTableId: !Ref publicRouteTableB
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref myIG
+  # Private
+  myNATGWRouteZoneA:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - privateSubnetA
+      - privateRouteTableA
+      - NATGWA
+    Properties:
+      RouteTableId: !Ref privateRouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGWB
+  myNATRouteZoneB:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - privateSubnetB
+      - privateRouteTableB
+      - NATGWB
+    Properties:
+      RouteTableId: !Ref privateRouteTableB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGWB
+  # SECURITY GROUPS
+  publicSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn:
+      - myVPC
+    Properties:
+      GroupDescription: allows traffic from internet
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: TCP
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: TCP
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref CIDRforSSH
+      Tags:
+        - Key: Name
+          Value: public SG
+  privateSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn:
+      - myVPC
+      - publicSG
+    Properties:
+      GroupDescription: private SG
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: TCP
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref publicSG
+        - IpProtocol: TCP
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref publicSG
+      Tags:
+        - Key: Name
+          Value: private SG
+Parameters:
+  CIDRforSSH:
+    Description: Cidr for SSH
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: ^.*$
+Outputs:
+  VPCID:
+    Description: my VPC Id
+    Value: !Ref myVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VPCID"
+  PublicSubnetA:
+    Description: public SubnetA
+    Value: !Ref publicSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicA"
+  PublicSubnetB:
+    Description: public SubnetB
+    Value: !Ref publicSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicB"
+  PrivateSubnetA:
+    Description: private SubnetA
+    Value: !Ref privateSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateA"
+  PrivateSubnetB:
+    Description: private SubnetB
+    Value: !Ref privateSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateB"
+  PublicSG:
+    Description: public SG
+    Value: !GetAtt publicSG.GroupId
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSG"
+  PrivateSG:
+    Description: private SG
+    Value: !GetAtt privateSG.GroupId
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSG"

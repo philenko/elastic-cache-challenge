@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  DBSG:
+    Type: AWS::RDS::DBSecurityGroup
+    Properties: 
+      DBSecurityGroupIngress:
+        - EC2SecurityGroupId: !ImportValue 
+            'Fn::Sub': '${NetworkStackName}-PublicSG'
+      EC2VpcId: !ImportValue network-VPCID
+      GroupDescription: Ingress from Amazon EC2 security group
+      Tags: 
+        - Key: Name
+          Value: DB SG
+  myDBSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    DependsOn:
+      - DBSG
+    Properties: 
+      DBSubnetGroupDescription: PostgreSQL SG
+      SubnetIds: 
+        - !ImportValue 
+            'Fn::Sub': '${NetworkStackName}-PrivateA'
+        - !ImportValue
+            'Fn::Sub': '${NetworkStackName}-PrivateB'
+      Tags: 
+        - 
+          Key: Name
+          Value: GuruChallenge
+  myPostgeSQLInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn:
+      - DBSG
+      - myDBSubnetGroup
+    Properties: 
+      AllocatedStorage: 20
+      StorageType: gp2
+      DBInstanceClass: db.t2.micro
+      Engine: "Postgres"
+      EngineVersion: 12.5
+      MasterUsername: !Ref DBAccount
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref myDBSubnetGroup
+      DBName: !Ref DBName
+      DBSecurityGroups:
+        - !Ref DBSG
+      Tags:
+        - Key: Name
+          Value: GuruChallenge
+  myCacheSubnet:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties: 
+      Description: GuruChallenge cache subnet
+      SubnetIds: 
+        - !ImportValue
+            'Fn::Sub': '${NetworkStackName}-PrivateA'
+      Tags: 
+        - Key: Name
+          Value: GuruChallenge cache subnet
+  myCacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    DependsOn:
+      - myCacheSubnet
+    Properties:
+      CacheNodeType: cache.t2.micro
+      Engine: redis
+      EngineVersion: 6.x
+      NumCacheNodes: 1
+      VpcSecurityGroupIds:
+        - !ImportValue
+            'Fn::Sub': '${NetworkStackName}-PrivateSG'
+      CacheSubnetGroupName: !Ref myCacheSubnet
+  EC2:
+    Type: AWS::EC2::Instance
+    DependsOn:
+    - myPostgeSQLInstance
+    - myCacheCluster
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0ab4d1e9cf9a1215a
+      KeyName: !Ref Key
+      NetworkInterfaces: 
+      - AssociatePublicIpAddress: "true"
+        DeviceIndex: "0"
+        GroupSet:
+          - !ImportValue
+              'Fn::Sub': '${NetworkStackName}-PublicSG'
+        SubnetId: !ImportValue
+          'Fn::Sub': '${NetworkStackName}-PublicA'
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            sudo yum -y update
+            sudo yum -y upgrade
+
+            sudo amazon-linux-extras install -y epel
+            sudo amazon-linux-extras install -y postgresql11
+            sudo amazon-linux-extras install -y nginx1
+            sudo amazon-linux-extras install -y python3.8
+            sudo amazon-linux-extras install -y redis6
+
+            sudo yum -y install gcc
+            sudo yum -y install git
+            sudo yum install -y postgresql-devel
+            sudo yum install -y python3-devel
+            sudo yum install -y python3-pip
+            sudo yum install -y python3-setuptools
+
+            sudo git clone https://github.com/philenko/elastic-cache-challenge.git home/app
+            sudo chmod -R 755 /home/app
+            sudo chown -R ec2-user:nginx /home/app
+
+            PGPASSWORD=${DBPassword} psql -h ${myPostgeSQLInstance.Endpoint.Address} -U ${DBAccount} -f /home/app/install.sql ${DBName}
+
+            sudo echo [postgresql] > /home/app/config/database.ini
+            sudo echo user=${DBAccount} >> /home/app/config/database.ini
+            sudo echo password=${DBPassword} >> /home/app/config/database.ini
+            sudo echo database=${DBName} >> /home/app/config/database.ini
+            sudo echo host=${myPostgeSQLInstance.Endpoint.Address} >> /home/app/config/database.ini
+            sudo echo "" >> /home/app/config/database.ini
+            sudo echo [redis] >> /home/app/config/database.ini
+            sudo echo url=redis://${myCacheCluster.RedisEndpoint.Address} >> /home/app/config/database.ini
+
+            sudo echo "server {" > /etc/nginx/conf.d/nginx-app.conf
+            sudo echo " listen     80;" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo " location /app {" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "   proxy_pass         http://127.0.0.1:5000/;" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "   proxy_redirect     off;" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "   proxy_set_header   Host                 \$host;" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "   proxy_set_header   X-Real-IP            \$remote_addr;" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "   proxy_set_header   X-Forwarded-For      \$proxy_add_x_forwarded_for;" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "   proxy_set_header   X-Forwarded-Proto    \$scheme;" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "   }" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "}" >> /etc/nginx/conf.d/nginx-app.conf
+            sudo echo "" >> /etc/nginx/conf.d/nginx-app.conf
+
+            cd /home/app
+            python3 -m venv /home/app
+            source /home/app/bin/activate
+            sudo pip3 install psycopg2 configparser redis flask
+
+            sudo systemctl start nginx
+            sudo systemctl enable nginx
+Parameters:
+  Key:
+    Description: "Key Name"
+    Type: String
+    Default: mykey
+    AllowedPattern: ^[a-zA-Z0-9]*$
+  DBAccount:
+    Description: "DB Admin account"
+    Type: String
+    Default: cloudguru
+    MinLength: 5
+    MaxLength: 41
+    AllowedPattern: ^[a-zA-Z0-9]*$
+  DBPassword:
+    Description: "Admin Password"
+    Type: String
+    Default: password
+    MinLength: 8
+    MaxLength: 41
+    AllowedPattern: ^[a-zA-Z0-9]*$
+  DBName:
+    Description: "DBName"
+    Type: String
+    Default: myPostgresDB
+    MinLength: 8
+    MaxLength: 41
+    AllowedPattern: ^[a-zA-Z0-9]*$
+  NetworkStackName:
+    Description: Name of active stack that contain networking configuration
+    Type: String
+    Default: network
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: ^[a-zA-Z0-9]*$
+Outputs:
+  GetRDSHostname:
+    Description: "RDS Hostname"
+    Value: !GetAtt myPostgeSQLInstance.Endpoint.Address
+  PublicIP:
+    Description: "PublicIP"
+    Value: !Join ['', [!GetAtt EC2.PublicIp,/app]]
